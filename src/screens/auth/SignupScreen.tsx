@@ -87,6 +87,12 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         role: 'Defense Personnel',
       };
 
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+        } catch (e) {}
+      }
+
       Alert.alert('Registration Successful', 'Your National Portal profile is ready.', [
         {
           text: 'Continue to Portal',
@@ -94,6 +100,12 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         },
       ]);
     } catch (err: any) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+        } catch (e) {}
+      }
+
       // Fallback in demo mode
       navigation?.replace?.('MainApp', {
         user: {

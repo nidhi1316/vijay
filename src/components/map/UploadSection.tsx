@@ -9,6 +9,7 @@ interface UploadSectionProps {
   onAnalyzePress?: () => void;
   hasAnalyzed?: boolean;
   onResetUpload?: () => void;
+  analyzingStageText?: string;
 }
 
 export const UploadSection: React.FC<UploadSectionProps> = ({
@@ -18,6 +19,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
   onAnalyzePress,
   hasAnalyzed = false,
   onResetUpload,
+  analyzingStageText = 'Converting 2D Blueprint to 3D Map...',
 }) => {
   // -------------------------------------------------------------
   // STATE 3: Analyzed -> Renders sleek compressed tactical bar at top
@@ -101,15 +103,17 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
           {isAnalyzing ? (
             <View style={styles.analyzingState}>
               <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
-              <Text style={styles.analyzingText}>Converting 2D Blueprint to 3D Map...</Text>
+              <Text style={styles.analyzingText}>{analyzingStageText}</Text>
             </View>
           ) : !hasAnalyzed && onAnalyzePress ? (
             <TouchableOpacity
               style={styles.analyseButton}
-              onPress={onAnalyzePress}
-              activeOpacity={0.85}
+              onPress={() => {
+                if (onAnalyzePress) onAnalyzePress();
+              }}
+              activeOpacity={0.7}
             >
-              <Ionicons name="scan" size={19} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Ionicons name="scan" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
               <Text style={styles.analyseButtonText}>Analyze & Generate 3D Map</Text>
             </TouchableOpacity>
           ) : null}

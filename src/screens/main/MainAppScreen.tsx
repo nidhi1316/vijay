@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
   StatusBar,
   Modal,
   Alert,
@@ -13,15 +12,17 @@ import {
   useWindowDimensions,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 import { colors } from '../../theme/colors';
 import { IMAGES } from '../../constants/assets';
 import { STRINGS } from '../../constants/strings';
-import { MapLayer } from '../../types/map';
+import { MapLayer, Architecture3D, SquadLocationData } from '../../types/map';
 import authService from '../../services/authService';
 import MapService from '../../services/map/MapService';
+import { BlueprintSpatialEngine } from '../../services/map/BlueprintSpatialEngine';
 
 // UI Components
 import { Header } from '../../components/layout/Header';
@@ -31,6 +32,8 @@ import { MapPreview } from '../../components/map/MapPreview';
 import { StartingTacticalInfo } from '../../components/map/StartingTacticalInfo';
 import { RecentMapsModal, RecentMapItem } from '../../components/map/RecentMapsModal';
 import { ForcesTickerSection } from '../../components/map/ForcesTickerSection';
+import { Scanning3DAnimationModal } from '../../components/map/Scanning3DAnimationModal';
+import { SquadCoLocationHUD } from '../../components/map/SquadCoLocationHUD';
 import { ProfileScreen } from './ProfileScreen';
 
 interface MainAppScreenProps {
@@ -51,12 +54,57 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
   const [uploadedMap, setUploadedMap] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [hasAnalyzed, setHasAnalyzed] = useState<boolean>(false);
+  const [analyzingStageText, setAnalyzingStageText] = useState<string>('Converting 2D Blueprint to 3D Map...');
+  const [architecture3D, setArchitecture3D] = useState<Architecture3D | null>(null);
+  const [metrics, setMetrics] = useState({
+    rooms: '8 Zones',
+    clearance: '3.2 Meters',
+    breaches: '3 Breaches',
+    status: '100% Ready 🟢',
+  });
 
   // 3D Viewport Simulation Controls
   const [activeLayer, setActiveLayer] = useState<MapLayer>('Tactical');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [is3DMode, setIs3DMode] = useState<boolean>(true);
   const [walkthroughActive, setWalkthroughActive] = useState<boolean>(false);
+
+  // Squad Co-Location & Dummy User Telemetry
+  const [squadData, setSquadData] = useState<SquadLocationData | null>(null);
+  const [squadLoading, setSquadLoading] = useState<boolean>(false);
+
+  // Load live squad telemetry (Active User + Dummy Commando Vikram)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSquad = async () => {
+      try {
+        const data = await MapService.getSquadLocations();
+        if (isMounted && data && data.success) {
+          setSquadData(data);
+        }
+      } catch (_) {}
+    };
+    fetchSquad();
+
+    const interval = setInterval(fetchSquad, 7000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handlePatrolDummy = async () => {
+    try {
+      setSquadLoading(true);
+      const updated = await MapService.patrolDummyUser();
+      if (updated && updated.success) {
+        setSquadData(updated);
+      }
+    } catch (_) {
+    } finally {
+      setSquadLoading(false);
+    }
+  };
 
   // Profile and navigation menu modal states
   const [profileModalVisible, setProfileModalVisible] = useState<boolean>(false);
@@ -65,27 +113,18 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
   const [currentViewMode, setCurrentViewMode] = useState<string>('2D Map');
   const [profileAvatar, setProfileAvatar] = useState<any>(IMAGES.demo.soldierMale);
 
-  // Recent uploaded 2D maps vault history
+  // Recent uploaded 2D maps vault history - starts at 0 on login
   const [recentMaps, setRecentMaps] = useState<RecentMapItem[]>(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
       try {
         const saved = window.localStorage.getItem('ideajam_recent_uploaded_maps');
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed)) return parsed;
         }
       } catch (e) {}
     }
-    return [
-      {
-        id: 'map_demo_ground_floor',
-        source: IMAGES.hero.flag,
-        name: 'Tactical Recon Blueprint (Sector Alpha)',
-        timestamp: '15:42',
-        date: 'Today',
-        size: '1.8 MB',
-      },
-    ];
+    return [];
   });
 
   // Helper to convert any image URI to permanent Data URI (Base64) for localhost storage
@@ -126,38 +165,32 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
     });
   };
 
-  // Load all past uploaded maps from localhost backend on startup and merge with local storage
-  useEffect(() => {
-    const fetchPastUploads = async () => {
-      try {
-        const backendMaps = await MapService.getRecentMapsFromBackend(user?.email || 'commando_tactical');
-        if (backendMaps && backendMaps.length > 0) {
-          const formatted: RecentMapItem[] = backendMaps.map((bm: any, index: number) => ({
-            id: bm._id || `map_backend_${index}`,
-            source: { uri: bm.originalImage },
-            name: bm.blueprintName || `Tactical Blueprint #${index + 1}`,
-            timestamp: new Date(bm.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            date: new Date(bm.createdAt || Date.now()).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
-            size: '1.4 MB',
-          }));
+  // Load all past uploaded maps from localhost backend for active user session
+  const fetchPastUploads = async () => {
+    try {
+      const userKey = user?.email || user?.id || 'commando_tactical';
+      const backendMaps = await MapService.getRecentMapsFromBackend(userKey);
+      if (backendMaps && Array.isArray(backendMaps)) {
+        const formatted: RecentMapItem[] = backendMaps.map((bm: any, index: number) => ({
+          id: bm._id || `map_backend_${index}`,
+          source: { uri: bm.originalImage },
+          name: bm.blueprintName || `Tactical Blueprint #${index + 1}`,
+          timestamp: new Date(bm.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          date: new Date(bm.createdAt || Date.now()).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+          size: '1.4 MB',
+        }));
 
-          setRecentMaps((prev) => {
-            const existingUris = new Set(formatted.map((m) => m.source?.uri));
-            const merged = [
-              ...formatted,
-              ...prev.filter((m) => !existingUris.has(m.source?.uri) && m.id !== 'map_demo_ground_floor'),
-            ];
-            if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-              try {
-                window.localStorage.setItem('ideajam_recent_uploaded_maps', JSON.stringify(merged));
-              } catch (e) {}
-            }
-            return merged;
-          });
+        setRecentMaps(formatted);
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+          try {
+            window.localStorage.setItem('ideajam_recent_uploaded_maps', JSON.stringify(formatted));
+          } catch (e) {}
         }
-      } catch (err) {}
-    };
+      }
+    } catch (err) {}
+  };
 
+  useEffect(() => {
     fetchPastUploads();
   }, [user]);
 
@@ -166,11 +199,23 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
     setUploadedMap(item.source);
     setRecentMapsModalVisible(false);
 
+    let targetUri = typeof item.source === 'string' ? item.source : item.source?.uri || '';
+    if (targetUri) {
+      BlueprintSpatialEngine.analyze2DBlueprint(targetUri).then((analysis) => {
+        if (analysis.isValidMap && analysis.architecture) {
+          setArchitecture3D(analysis.architecture);
+          setMetrics({
+            rooms: `${analysis.architecture.rooms.length} Zones`,
+            clearance: `${analysis.architecture.dimensions.clearanceMeters} Meters`,
+            breaches: `${analysis.architecture.tacticalMarkers.filter((m) => m.type === 'BREACH').length || 1} Breaches`,
+            status: '100% Ready 🟢',
+          });
+        }
+      }).catch(() => {});
+    }
+
     if (autoAnalyze) {
-      setHasAnalyzed(true);
-      setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      }, 50);
+      handleAnalyzePress(item.source);
     } else {
       setHasAnalyzed(false);
       setTimeout(() => {
@@ -189,6 +234,7 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
       }
       return updated;
     });
+    MapService.deleteMapFromBackend(id).catch(() => {});
   };
 
   // Pick Image from Device Gallery
@@ -209,6 +255,19 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
         setSelectedSource(source);
         setUploadedMap(source);
         setHasAnalyzed(false);
+
+        // Pre-analyze blueprint immediately so 3D model is ready
+        BlueprintSpatialEngine.analyze2DBlueprint(permanentUri).then((analysis) => {
+          if (analysis.isValidMap && analysis.architecture) {
+            setArchitecture3D(analysis.architecture);
+            setMetrics({
+              rooms: `${analysis.architecture.rooms.length} Zones`,
+              clearance: `${analysis.architecture.dimensions.clearanceMeters} Meters`,
+              breaches: `${analysis.architecture.tacticalMarkers.filter((m) => m.type === 'BREACH').length || 1} Breaches`,
+              status: '100% Ready 🟢',
+            });
+          }
+        }).catch(() => {});
 
         const bpName = `Tactical_Blueprint_${Date.now().toString().slice(-4)}.png`;
         // Save to localhost backend disk & database
@@ -243,6 +302,19 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
             setUploadedMap(source);
             setHasAnalyzed(false);
 
+            // Pre-analyze blueprint immediately
+            BlueprintSpatialEngine.analyze2DBlueprint(permanentUri).then((analysis) => {
+              if (analysis.isValidMap && analysis.architecture) {
+                setArchitecture3D(analysis.architecture);
+                setMetrics({
+                  rooms: `${analysis.architecture.rooms.length} Zones`,
+                  clearance: `${analysis.architecture.dimensions.clearanceMeters} Meters`,
+                  breaches: `${analysis.architecture.tacticalMarkers.filter((m) => m.type === 'BREACH').length || 1} Breaches`,
+                  status: '100% Ready 🟢',
+                });
+              }
+            }).catch(() => {});
+
             const bpName = `Tactical_Blueprint_${Date.now().toString().slice(-4)}.png`;
             MapService.uploadMapToBackend(permanentUri, bpName, user?.email || 'commando_tactical')
               .then((bRes) => {
@@ -265,17 +337,77 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
     }
   };
 
-  // When user clicks "Analyze & Generate 3D Map" -> Auto scroll to top so 3D map directly covers screen
-  const handleAnalyzePress = () => {
+  // When user clicks "Analyze & Generate 3D Map" -> Call spatial engine and auto scroll to top
+  const handleAnalyzePress = async (explicitMapSource?: any) => {
+    // Check if explicitMapSource is a valid image source (avoid click event objects)
+    const isSource =
+      explicitMapSource &&
+      (typeof explicitMapSource === 'string' ||
+        (typeof explicitMapSource === 'object' && typeof explicitMapSource.uri === 'string') ||
+        typeof explicitMapSource === 'number');
+
+    const activeMap = (isSource ? explicitMapSource : null) || uploadedMap || selectedSource;
+    let targetUri = '';
+    if (typeof activeMap === 'string') {
+      targetUri = activeMap;
+    } else if (activeMap?.uri) {
+      targetUri = activeMap.uri;
+    } else {
+      const resolved = Image.resolveAssetSource(activeMap);
+      targetUri = resolved?.uri || '';
+    }
+
+    if (!targetUri) {
+      Alert.alert('No Map Selected', 'Please upload or select a 2D blueprint map first.');
+      return;
+    }
+
+    // Immediately trigger 3D Scanning animation modal
     setIsAnalyzing(true);
-    setTimeout(() => {
-      setIsAnalyzing(false);
-      setHasAnalyzed(true);
-      // Auto-scroll smoothly to top so 3D map directly covers screen
+    setAnalyzingStageText('1/3 Validating & scanning 2D blueprint contours...');
+
+    try {
+      // 1. Analyze 2D blueprint and extract custom 3D architecture
+      const analysisResult = await BlueprintSpatialEngine.analyze2DBlueprint(targetUri);
+      const customArch =
+        (analysisResult && analysisResult.isValidMap && analysisResult.architecture) ||
+        architecture3D ||
+        MapService.getDefault3DArchitecture(targetUri);
+
+      // 2. Call backend spatial API in background to sync
+      MapService.analyzeMapOnBackend(`map_${Date.now()}`, targetUri, customArch).catch(() => {});
+
+      // 3. Keep 3D scanning laser animation active for ~1.6s so user sees the high-tech 3D animation
       setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      }, 50);
-    }, 900);
+        setIsAnalyzing(false);
+        setArchitecture3D(customArch);
+        setMetrics({
+          rooms: `${customArch.rooms?.length || 6} Zones`,
+          clearance: `${customArch.dimensions?.clearanceMeters || 3.2} Meters`,
+          breaches: `${customArch.tacticalMarkers?.filter((m: any) => m.type === 'BREACH')?.length || 1} Breaches`,
+          status: '100% Ready 🟢',
+        });
+        setHasAnalyzed(true);
+        setIs3DMode(true);
+
+        // Auto-scroll smoothly to top so 3D map directly covers screen
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+        }, 100);
+      }, 1600);
+    } catch (e: any) {
+      // Fallback: Generate robust 3D model regardless so user is never stuck
+      const fallbackArch = architecture3D || MapService.getDefault3DArchitecture(targetUri);
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        setArchitecture3D(fallbackArch);
+        setHasAnalyzed(true);
+        setIs3DMode(true);
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+        }, 100);
+      }, 1600);
+    }
   };
 
   const handlePickAvatar = async () => {
@@ -353,7 +485,9 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
         }
 
         // 2. Download 3D Tactical Mesh Geometry File (.obj) for CAD / 3D Walkthrough Viewers
-        const objContent = `# National Defense Tactical 3D Reconnaissance Model
+        const objContent =
+          architecture3D?.objContent ||
+          `# National Defense Tactical 3D Reconnaissance Model
 # Project VIJAY - Commando Spatial Division
 # Clearance Height: 3.2m | Threat: ALPHA_SECURE
 # Generated: ${new Date().toISOString()}
@@ -405,6 +539,18 @@ f 4 8 5 1
 
   const handleLogout = async () => {
     setProfileModalVisible(false);
+    // Reset past maps to 0 on logout
+    setRecentMaps([]);
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+      } catch (e) {}
+    }
+    const userKey = user?.email || user?.id || 'commando_tactical';
+    try {
+      await MapService.clearMapsOnBackend(userKey);
+    } catch (e) {}
+
     if (userToken) {
       await authService.logout(userToken);
     }
@@ -417,11 +563,11 @@ f 4 8 5 1
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="light-content" backgroundColor="#08140D" />
 
-      {/* Top Header Bar with Army Emblem Logo next to "vijay" */}
-      <Header onMenuPress={() => setMenuModalVisible(true)} title="vijay" />
+      {/* Top Header Bar with Army Emblem Logo next to "Vijay" */}
+      <Header onMenuPress={() => setMenuModalVisible(true)} title="Vijay" />
 
       {/* Commando Military Profile Modal */}
       <ProfileScreen
@@ -442,6 +588,12 @@ f 4 8 5 1
         onSelectMap={handleSelectRecentMap}
         onUploadNew={handleUploadMap}
         onDeleteMap={handleDeleteRecentMap}
+      />
+
+      {/* 3D Laser Scanning & Hologram Extrusion Animation Modal */}
+      <Scanning3DAnimationModal
+        visible={isAnalyzing}
+        sourceImage={uploadedMap || selectedSource}
       />
 
       {/* Navigation Menu Modal */}
@@ -491,6 +643,7 @@ f 4 8 5 1
                 onPress={() => {
                   setCurrentViewMode('2D Map');
                   setMenuModalVisible(false);
+                  fetchPastUploads();
                   setRecentMapsModalVisible(true);
                 }}
               >
@@ -503,20 +656,22 @@ f 4 8 5 1
 
               {/* Option 3: 3D Map View */}
               <TouchableOpacity
-                style={styles.menuListItemBtn}
+                style={[
+                  styles.menuListItemBtn,
+                  currentViewMode === '3D Map' && styles.menuListItemActive,
+                ]}
                 activeOpacity={0.8}
                 onPress={() => {
+                  setCurrentViewMode('3D Map');
                   setMenuModalVisible(false);
-                  setHasAnalyzed(true);
-                  setTimeout(() => {
-                    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-                  }, 100);
+                  setIs3DMode(true);
+                  handleAnalyzePress();
                 }}
               >
                 <View style={styles.menuItemBadge}>
                   <Text style={styles.menuItemBadgeIcon}>🧊</Text>
                 </View>
-                <Text style={styles.menuListItemText}>3. 3D Map View</Text>
+                <Text style={styles.menuListItemText}>3. 3D Map</Text>
                 <Text style={styles.menuChevron}>›</Text>
               </TouchableOpacity>
             </View>
@@ -548,6 +703,7 @@ f 4 8 5 1
           onUploadPress={handleUploadMap}
           uploadedImage={uploadedMap || (hasAnalyzed ? selectedSource : null)}
           isAnalyzing={isAnalyzing}
+          analyzingStageText={analyzingStageText}
           onAnalyzePress={handleAnalyzePress}
           hasAnalyzed={hasAnalyzed}
           onResetUpload={handleResetUpload}
@@ -568,9 +724,10 @@ f 4 8 5 1
             </View>
             <Text style={styles.generatedTitle}>3D Spatial Walkthrough</Text>
 
-            {/* 3D Map Viewport Component with controls */}
+            {/* 3D Map Viewport Component with controls & Squad Telemetry */}
             <MapPreview
               sourceImage={uploadedMap || selectedSource}
+              architecture={architecture3D || undefined}
               is3DMode={is3DMode}
               zoomLevel={zoomLevel}
               activeLayer={activeLayer}
@@ -588,6 +745,14 @@ f 4 8 5 1
                 );
               }}
               onSelectLayer={(layer) => setActiveLayer(layer)}
+              squadData={squadData}
+            />
+
+            {/* Live Squad Co-Location & Distance Telemetry HUD */}
+            <SquadCoLocationHUD
+              squadData={squadData}
+              onPatrolDummy={handlePatrolDummy}
+              loading={squadLoading}
             />
 
             {/* Tactical Intelligence Data Box */}
@@ -612,22 +777,21 @@ f 4 8 5 1
               <View style={styles.metricGrid}>
                 <View style={styles.metricBox}>
                   <Text style={styles.metricLabel}>Rooms Detected</Text>
-                  <Text style={styles.metricValue}>14 Zones</Text>
+                  <Text style={styles.metricValue}>{metrics.rooms}</Text>
                 </View>
                 <View style={styles.metricBox}>
                   <Text style={styles.metricLabel}>Clearance Height</Text>
-                  <Text style={styles.metricValue}>3.2 Meters</Text>
+                  <Text style={styles.metricValue}>{metrics.clearance}</Text>
                 </View>
                 <View style={styles.metricBox}>
                   <Text style={styles.metricLabel}>Entry Points</Text>
-                  <Text style={styles.metricValue}>3 Breaches</Text>
+                  <Text style={styles.metricValue}>{metrics.breaches}</Text>
                 </View>
                 <View style={styles.metricBox}>
                   <Text style={styles.metricLabel}>Offline Status</Text>
-                  <Text style={[styles.metricValue, { color: '#10B981' }]}>100% Ready 🟢</Text>
+                  <Text style={[styles.metricValue, { color: '#10B981' }]}>{metrics.status}</Text>
                 </View>
               </View>
-
             </View>
           </View>
         )}

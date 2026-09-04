@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { SpatialIntelMetrics } from '../../types/map';
+import { SpatialIntelMetrics, Architecture3D, SquadLocationData } from '../../types/map';
+import { BlueprintSpatialEngine, BlueprintAnalysisResult } from './BlueprintSpatialEngine';
 
 export interface UploadMapResponse {
   success: boolean;
@@ -13,6 +14,7 @@ export interface AnalyzeMapResponse {
   success: boolean;
   message: string;
   mapId: string;
+  map?: any;
   analysis: {
     roomsCount: number;
     clearanceHeight: number;
@@ -25,15 +27,35 @@ export interface AnalyzeMapResponse {
     };
     threatLevel: string;
     tacticalGrid: any;
+    architecture3D?: Architecture3D;
   };
+  architecture3D?: Architecture3D;
 }
 
 export class MapService {
+  /**
+   * Helper to build dynamic 3D architecture based on blueprint image
+   */
+  static getDefault3DArchitecture(imageUriOrSeed?: string): Architecture3D {
+    let hash = 0;
+    const str = String(imageUriOrSeed || 'blueprint_default');
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) | 0;
+    }
+    return BlueprintSpatialEngine.generateStructuralLayoutFromFingerprint(hash);
+  }
+
   /**
    * Generates candidate URLs for backend connection
    */
   private static getApiBaseUrls(): string[] {
     const urls: string[] = [];
+
+    // Production Cloud URL from Environment Variable
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+      urls.push(`${base}/api/map`);
+    }
 
     // Localhost for Web
     if (Platform.OS === 'web') {
@@ -128,15 +150,77 @@ export class MapService {
   }
 
   /**
-   * Analyze 2D Blueprint & Generate 3D Model on Backend
+   * Delete map from backend (localhost:5000)
    */
-  static async analyzeMapOnBackend(mapId: string, imageUri?: string): Promise<AnalyzeMapResponse> {
+  static async deleteMapFromBackend(mapId: string): Promise<boolean> {
     const urls = this.getApiBaseUrls();
 
     for (const url of urls) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const response = await fetch(`${url}/${mapId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return true;
+        }
+      } catch (err) {
+        // Try next candidate url
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Clear all maps from backend for user on logout/reset
+   */
+  static async clearMapsOnBackend(userId?: string): Promise<boolean> {
+    const urls = this.getApiBaseUrls();
+
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const response = await fetch(`${url}/clear`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return true;
+        }
+      } catch (err) {
+        // Try next candidate url
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Analyze 2D Blueprint & Generate 3D Model on Backend
+   */
+  static async analyzeMapOnBackend(mapId: string, imageUri?: string, precomputedArch?: Architecture3D): Promise<AnalyzeMapResponse> {
+    const urls = this.getApiBaseUrls();
+    const defaultArch = precomputedArch || this.getDefault3DArchitecture(imageUri);
+
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
         const response = await fetch(`${url}/analyze`, {
           method: 'POST',
@@ -144,6 +228,7 @@ export class MapService {
           body: JSON.stringify({
             mapId,
             originalImage: imageUri,
+            architecture3D: precomputedArch,
           }),
           signal: controller.signal,
         });
@@ -151,22 +236,26 @@ export class MapService {
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          return await response.json();
+          const resJson = await response.json();
+          if (resJson && resJson.success) {
+            return resJson;
+          }
         }
       } catch (err) {
         // Try next candidate url
       }
     }
 
-    // Fallback: Local offline mock response
+    // Fallback: Local offline response with rich 3D architecture
     return {
       success: true,
       message: '3D Tactical Model generated (Offline Spatial Recon).',
       mapId,
+      architecture3D: defaultArch,
       analysis: {
-        roomsCount: 14,
-        clearanceHeight: 3.2,
-        breachPoints: 3,
+        roomsCount: defaultArch.rooms.length,
+        clearanceHeight: defaultArch.dimensions.clearanceMeters,
+        breachPoints: defaultArch.tacticalMarkers.filter((m) => m.type === 'BREACH').length || 1,
         wallThickness: 0.35,
         meshStats: {
           vertices: 18400,
@@ -180,6 +269,7 @@ export class MapService {
           targetAlpha: { x: 38, y: 30 },
           extractionZone: { x: 60, y: 65 },
         },
+        architecture3D: defaultArch,
       },
     };
   }
@@ -197,17 +287,155 @@ export class MapService {
   }
 
   /**
-   * Validates if file format is supported (JPG, JPEG, PNG, GIF, PDF)
+   * Helper to get candidate User API URLs
    */
-  static isValidMapFormat(uri: string): boolean {
-    const cleanUri = uri.toLowerCase();
-    return (
-      cleanUri.endsWith('.jpg') ||
-      cleanUri.endsWith('.jpeg') ||
-      cleanUri.endsWith('.png') ||
-      cleanUri.endsWith('.gif') ||
-      cleanUri.endsWith('.pdf')
-    );
+  private static getUserApiUrls(): string[] {
+    const urls: string[] = [];
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+      urls.push(`${base}/api/user`);
+    }
+    urls.push('http://localhost:5000/api/user', 'http://127.0.0.1:5000/api/user');
+    return urls;
+  }
+
+  /**
+   * Fetch Live Squad Locations (Active User + Dummy Commando Vikram)
+   */
+  static async getSquadLocations(): Promise<SquadLocationData> {
+    const urls = this.getUserApiUrls();
+
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+        const res = await fetch(`${url}/squad-locations`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) {
+            return data;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback Offline Squad Telemetry
+    return {
+      success: true,
+      timestamp: new Date().toISOString(),
+      mapFloor: 'PLAN @ 0.000M LVL',
+      primaryUser: {
+        id: 'active-user-captain',
+        name: 'Captain Arjun (You)',
+        callsign: 'Alpha-01',
+        role: 'Tactical Team Lead',
+        isOnline: true,
+        status: 'COMMAND_POINT',
+        color: '#10B981',
+        radarColor: 'rgba(16, 185, 129, 0.4)',
+        location: {
+          x: 7.85,
+          y: 0.5,
+          z: 0.0,
+          roomName: 'Reception & Security Waiting Hall',
+          roomCode: 'RECEPT-01',
+          floorLevel: 'PLAN @ 0.000M LVL',
+        },
+      },
+      dummyUser: {
+        id: 'dummy-commando-vikram',
+        name: 'Commando Vikram',
+        callsign: 'Recon-Bravo',
+        role: 'Reconnaissance Specialist',
+        isOnline: true,
+        status: 'ACTIVE_PATROL',
+        color: '#38BDF8',
+        radarColor: 'rgba(56, 189, 248, 0.4)',
+        location: {
+          x: -2.3,
+          y: 0.5,
+          z: -4.75,
+          roomName: 'Record Room & Cyber Server Vault',
+          roomCode: 'SEC-VAULT',
+          floorLevel: 'PLAN @ 0.000M LVL',
+        },
+      },
+      interUnitMetrics: {
+        distanceMeters: 11.21,
+        direct3DDistance: 11.21,
+        bearingDegrees: 245,
+        bearingCompass: 'SW',
+        proximityStatus: 'CROSS_SECTOR',
+        lineOfSight: 'CLEAR_CORRIDOR',
+      },
+      vectorLine: {
+        from: {
+          userId: 'active-user-captain',
+          name: 'Captain Arjun (You)',
+          position: { x: 7.85, y: 0.5, z: 0.0, roomName: 'Reception' },
+          color: '#10B981',
+        },
+        to: {
+          userId: 'dummy-commando-vikram',
+          name: 'Commando Vikram',
+          position: { x: -2.3, y: 0.5, z: -4.75, roomName: 'Server Vault' },
+          color: '#38BDF8',
+        },
+        distanceMeters: 11.21,
+        color: '#F59E0B',
+      },
+    };
+  }
+
+  /**
+   * Update active user's location on backend
+   */
+  static async updateUserLocation(coords: { x: number; y?: number; z: number; roomName?: string }): Promise<SquadLocationData> {
+    const urls = this.getUserApiUrls();
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(`${url}/update-location`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(coords),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) return data;
+        }
+      } catch (_) {}
+    }
+
+    return this.getSquadLocations();
+  }
+
+  /**
+   * Trigger Dummy User Patrol to move to next waypoint
+   */
+  static async patrolDummyUser(): Promise<SquadLocationData> {
+    const urls = this.getUserApiUrls();
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(`${url}/patrol-dummy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) return data;
+        }
+      } catch (_) {}
+    }
+
+    return this.getSquadLocations();
   }
 }
 

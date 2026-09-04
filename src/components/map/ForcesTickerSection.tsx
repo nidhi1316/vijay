@@ -80,23 +80,31 @@ export const FORCES_DATA: ForceUnitInfo[] = [
   },
 ];
 
+const CARD_WIDTH = 305;
+const CARD_MARGIN = 12;
+const SINGLE_SET_WIDTH = FORCES_DATA.length * (CARD_WIDTH + CARD_MARGIN); // 6 * 317 = 1902
+
 export const ForcesTickerSection: React.FC = () => {
-  const animatedValue = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      const startLoop = () => {
-        animatedValue.setValue(0);
-        Animated.timing(animatedValue, {
-          toValue: -1,
-          duration: 22000,
+      translateX.setValue(0);
+      const animation = Animated.loop(
+        Animated.timing(translateX, {
+          toValue: -SINGLE_SET_WIDTH,
+          duration: 26000,
           easing: Easing.linear,
           useNativeDriver: true,
-        }).start(() => startLoop());
+        })
+      );
+      animation.start();
+
+      return () => {
+        animation.stop();
       };
-      startLoop();
     }
-  }, [animatedValue]);
+  }, [translateX]);
 
   // Double list for seamless continuous infinite marquee
   const loopedForces = [...FORCES_DATA, ...FORCES_DATA];
@@ -184,46 +192,51 @@ export const ForcesTickerSection: React.FC = () => {
             ))}
           </div>
         ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.nativeScrollContent}
-          >
-            {loopedForces.map((force, index) => (
-              <View key={`${force.id}-${index}`} style={styles.forceCard}>
-                {/* Subtle top tricolor accent line */}
-                <View style={styles.cardTricolorGlow}>
-                  <View style={{ flex: 1, backgroundColor: '#FF671F' }} />
-                  <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />
-                  <View style={{ flex: 1, backgroundColor: '#046A38' }} />
-                </View>
+          <View style={styles.nativeTickerContainer}>
+            <Animated.View
+              style={[
+                styles.nativeTrack,
+                {
+                  transform: [{ translateX }],
+                },
+              ]}
+            >
+              {loopedForces.map((force, index) => (
+                <View key={`${force.id}-${index}`} style={styles.forceCard}>
+                  {/* Subtle top tricolor accent line */}
+                  <View style={styles.cardTricolorGlow}>
+                    <View style={{ flex: 1, backgroundColor: '#FF671F' }} />
+                    <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />
+                    <View style={{ flex: 1, backgroundColor: '#046A38' }} />
+                  </View>
 
-                {/* Left: Commando Action Picture */}
-                <View style={styles.photoWrapper}>
-                  <Image source={force.image} style={styles.commandoPhoto as ImageStyle} resizeMode="cover" />
-                  <View style={styles.photoOverlayBorder} />
-                </View>
+                  {/* Left: Commando Action Picture */}
+                  <View style={styles.photoWrapper}>
+                    <Image source={force.image} style={styles.commandoPhoto as ImageStyle} resizeMode="cover" />
+                    <View style={styles.photoOverlayBorder} />
+                  </View>
 
-                {/* Right: Concise Tactical Content */}
-                <View style={styles.infoCol}>
-                  <View style={styles.cardHeaderRow}>
-                    <View style={[styles.unitTagPill, { borderColor: force.badgeColor }]}>
-                      <Text style={[styles.unitTagText, { color: force.badgeColor }]}>{force.shortTag}</Text>
+                  {/* Right: Concise Tactical Content */}
+                  <View style={styles.infoCol}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={[styles.unitTagPill, { borderColor: force.badgeColor }]}>
+                        <Text style={[styles.unitTagText, { color: force.badgeColor }]}>{force.shortTag}</Text>
+                      </View>
+                      <View style={styles.statusDotGreen} />
                     </View>
-                    <View style={styles.statusDotGreen} />
-                  </View>
 
-                  <Text style={styles.forceName} numberOfLines={1}>{force.name}</Text>
-                  <Text style={styles.forceRole} numberOfLines={1}>{force.role}</Text>
+                    <Text style={styles.forceName} numberOfLines={1}>{force.name}</Text>
+                    <Text style={styles.forceRole} numberOfLines={1}>{force.role}</Text>
 
-                  <View style={styles.usageRow}>
-                    <Text style={styles.usageBullet}>▸</Text>
-                    <Text style={styles.usageText} numberOfLines={2}>{force.appUsage}</Text>
+                    <View style={styles.usageRow}>
+                      <Text style={styles.usageBullet}>▸</Text>
+                      <Text style={styles.usageText} numberOfLines={2}>{force.appUsage}</Text>
+                    </View>
                   </View>
                 </View>
-              </View>
-            ))}
-          </ScrollView>
+              ))}
+            </Animated.View>
+          </View>
         )}
       </View>
     </View>
@@ -288,8 +301,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     paddingVertical: 4,
   },
-  nativeScrollContent: {
-    paddingHorizontal: 10,
+  nativeTickerContainer: {
+    width: '100%',
+    overflow: 'hidden',
+  },
+  nativeTrack: {
+    flexDirection: 'row',
   },
   forceCard: {
     width: 305,

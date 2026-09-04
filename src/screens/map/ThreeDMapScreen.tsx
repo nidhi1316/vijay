@@ -5,19 +5,22 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
   StatusBar,
   Image,
   ImageStyle,
   Alert,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { colors } from '../../theme/colors';
 import { IMAGES } from '../../constants/assets';
 import { STRINGS } from '../../constants/strings';
 import { MapPreview } from '../../components/map/MapPreview';
-import { MapLayer } from '../../types/map';
+import { SquadCoLocationHUD } from '../../components/map/SquadCoLocationHUD';
+import { MapLayer, Architecture3D, SquadLocationData } from '../../types/map';
+import { BlueprintSpatialEngine } from '../../services/map/BlueprintSpatialEngine';
+import { MapService } from '../../services/map/MapService';
 
 interface ThreeDMapScreenProps {
   route?: any;
@@ -27,10 +30,72 @@ interface ThreeDMapScreenProps {
 export const ThreeDMapScreen: React.FC<ThreeDMapScreenProps> = ({ route, navigation }) => {
   const initialSource = route?.params?.source || IMAGES.hero.flag;
   const [currentSource, setCurrentSource] = useState<any>(initialSource);
+  const [architecture, setArchitecture] = useState<Architecture3D | undefined>(route?.params?.architecture);
   const [activeLayer, setActiveLayer] = useState<MapLayer>('Tactical');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [is3DMode, setIs3DMode] = useState<boolean>(true);
   const [walkthroughActive, setWalkthroughActive] = useState<boolean>(false);
+
+  // Live Squad Co-Location Telemetry State
+  const [squadData, setSquadData] = useState<SquadLocationData | null>(null);
+  const [squadLoading, setSquadLoading] = useState<boolean>(false);
+
+  // Poll / Fetch Live Squad Telemetry
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchSquad = async () => {
+      try {
+        const data = await MapService.getSquadLocations();
+        if (isMounted && data) {
+          setSquadData(data);
+        }
+      } catch (err) {
+        console.warn('Failed to load squad co-locations:', err);
+      }
+    };
+
+    fetchSquad();
+    const interval = setInterval(fetchSquad, 7000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handlePatrolDummy = async () => {
+    setSquadLoading(true);
+    try {
+      const updated = await MapService.patrolDummyUser();
+      if (updated) {
+        setSquadData(updated);
+      }
+    } catch (err) {
+      console.warn('Patrol trigger error:', err);
+    } finally {
+      setSquadLoading(false);
+    }
+  };
+
+  // Analyze blueprint on load or change
+  React.useEffect(() => {
+    let targetUri = '';
+    if (typeof currentSource === 'string') {
+      targetUri = currentSource;
+    } else if (currentSource?.uri) {
+      targetUri = currentSource.uri;
+    } else {
+      const resolved = Image.resolveAssetSource(currentSource);
+      targetUri = resolved?.uri || '';
+    }
+
+    if (targetUri) {
+      BlueprintSpatialEngine.analyze2DBlueprint(targetUri).then((res) => {
+        if (res.isValidMap && res.architecture) {
+          setArchitecture(res.architecture);
+        }
+      }).catch(() => {});
+    }
+  }, [currentSource]);
 
   // Upload new 2D Map directly from 3D Map screen
   const handleUploadAnother = async () => {
@@ -38,11 +103,12 @@ export const ThreeDMapScreen: React.FC<ThreeDMapScreenProps> = ({ route, navigat
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        quality: 1,
+        quality: 0.85,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setCurrentSource({ uri: result.assets[0].uri });
+        const newSource = { uri: result.assets[0].uri };
+        setCurrentSource(newSource);
         Alert.alert('2D Map Updated', 'New 2D blueprint converted to 3D Map model! 🗺️');
       }
     } catch (err) {
@@ -51,7 +117,7 @@ export const ThreeDMapScreen: React.FC<ThreeDMapScreenProps> = ({ route, navigat
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="light-content" backgroundColor={colors.commando.background} />
 
       {/* 1. Header Bar */}
@@ -96,6 +162,7 @@ export const ThreeDMapScreen: React.FC<ThreeDMapScreenProps> = ({ route, navigat
         {/* 3D Viewport Simulation Card Component */}
         <MapPreview
           sourceImage={currentSource}
+          architecture={architecture}
           is3DMode={is3DMode}
           zoomLevel={zoomLevel}
           activeLayer={activeLayer}
@@ -113,6 +180,14 @@ export const ThreeDMapScreen: React.FC<ThreeDMapScreenProps> = ({ route, navigat
             );
           }}
           onSelectLayer={(layer) => setActiveLayer(layer)}
+          squadData={squadData}
+        />
+
+        {/* Live Squad Co-Location & Distance Telemetry HUD */}
+        <SquadCoLocationHUD
+          squadData={squadData}
+          onPatrolDummy={handlePatrolDummy}
+          loading={squadLoading}
         />
 
         {/* Tactical Intelligence Data Box */}

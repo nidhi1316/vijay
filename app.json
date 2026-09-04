@@ -9,6 +9,9 @@
     "splash": {
       "backgroundColor": "#070A13"
     },
+    "android": {
+      "package": "com.anonymous.ideajam"
+    },
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"

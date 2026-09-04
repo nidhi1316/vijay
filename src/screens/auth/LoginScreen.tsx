@@ -65,8 +65,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         role: 'Chief of the Commandos',
       };
 
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+        } catch (e) {}
+      }
+
       navigation?.replace?.('MainApp', { user });
     } catch (err: any) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+        } catch (e) {}
+      }
+
       // Fallback smooth navigation for instant demo
       navigation?.replace?.('MainApp', {
         user: {
@@ -89,6 +101,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('ideajam_recent_uploaded_maps');
+        } catch (e) {}
+      }
       navigation?.replace?.('MainApp', {
         user: {
           id: 'usr_digital_id',

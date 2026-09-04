@@ -4,7 +4,7 @@
 
 export const STRINGS = {
   app: {
-    name: 'vijay',
+    name: 'Vijay',
     tagline: 'Transforming 2D floor plans into immersive 3D walkthroughs',
     heroHeadingPrefix: 'Blueprint to Battlefield:',
     heroHeadingAccent: 'Instant 3D Intelligence',

@@ -43,7 +43,11 @@ export class AuthService {
   private getCandidateUrls(endpoint: string): string[] {
     const urls: string[] = [];
 
-    // 1. Try Expo Constants host IP auto-detection (Works for physical devices using Expo Go)
+    // Production Cloud URL from Environment Variable
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+      urls.push(`${base}/api${endpoint}`);
+    }
     try {
       const hostUri =
         Constants?.expoConfig?.hostUri ||

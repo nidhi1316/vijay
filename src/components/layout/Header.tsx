@@ -18,7 +18,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuPress, title = STRINGS.app
         <Image
           source={IMAGES.icons.logo}
           style={styles.headerLogo as ImageStyle}
-          resizeMode="cover"
+          resizeMode="contain"
         />
         <Text style={styles.brandText}>{title}</Text>
       </View>
@@ -46,13 +46,13 @@ export const Header: React.FC<HeaderProps> = ({ onMenuPress, title = STRINGS.app
 const styles = StyleSheet.create({
   header: {
     width: '100%',
-    height: 60,
+    height: 62,
     flexShrink: 0,
     backgroundColor: '#08140D',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#1A3D25',
     elevation: 4,
@@ -64,12 +64,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerLogo: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     marginRight: 10,
     borderWidth: 1.5,
-    borderColor: 'rgba(229, 184, 66, 0.6)',
+    borderColor: '#E5B842',
+    backgroundColor: '#07150C',
   },
   brandText: {
     fontSize: 25,

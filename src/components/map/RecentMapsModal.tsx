@@ -235,8 +235,10 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    maxWidth: 460,
-    maxHeight: '88%',
+    maxWidth: 480,
+    height: '84%',
+    maxHeight: 680,
+    minHeight: 460,
     backgroundColor: '#0F2417',
     borderRadius: 24,
     borderWidth: 1.5,
@@ -247,6 +249,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 24,
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -354,11 +358,14 @@ const styles = StyleSheet.create({
   },
   scrollContainer: {
     flex: 1,
+    width: '100%',
+    minHeight: 220,
   },
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 6,
     paddingBottom: 16,
+    flexGrow: 1,
   },
   mapItemCard: {
     flexDirection: 'row',
