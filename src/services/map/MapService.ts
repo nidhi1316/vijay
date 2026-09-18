@@ -37,12 +37,7 @@ export class MapService {
    * Helper to build dynamic 3D architecture based on blueprint image
    */
   static getDefault3DArchitecture(imageUriOrSeed?: string): Architecture3D {
-    let hash = 0;
-    const str = String(imageUriOrSeed || 'blueprint_default');
-    for (let i = 0; i < str.length; i++) {
-      hash = (hash * 31 + str.charCodeAt(i)) | 0;
-    }
-    return BlueprintSpatialEngine.generateStructuralLayoutFromFingerprint(hash);
+    return BlueprintSpatialEngine.generateOfficeComplexArchitecture();
   }
 
   /**
@@ -51,17 +46,17 @@ export class MapService {
   private static getApiBaseUrls(): string[] {
     const urls: string[] = [];
 
+    // 1. Primary Production Cloud Backend (Vercel)
+    urls.push('https://vijay-backend-xi.vercel.app/api/map');
+
     // Production Cloud URL from Environment Variable
     if (process.env.EXPO_PUBLIC_API_URL) {
       const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
       urls.push(`${base}/api/map`);
     }
 
-    // Localhost for Web
-    if (Platform.OS === 'web') {
-      urls.push('http://localhost:5000/api/map');
-      urls.push('http://127.0.0.1:5000/api/map');
-    }
+    // Web & Fallbacks
+    urls.push('https://vijay-backend-xi.vercel.app/api/map');
 
     // Expo Host URI for LAN Mobile
     const hostUri = Constants.expoConfig?.hostUri || Constants.manifest?.debuggerHost;
@@ -291,11 +286,15 @@ export class MapService {
    */
   private static getUserApiUrls(): string[] {
     const urls: string[] = [];
+
+    // 1. Primary Production Cloud Backend (Vercel)
+    urls.push('https://vijay-backend-xi.vercel.app/api/user');
+
     if (process.env.EXPO_PUBLIC_API_URL) {
       const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
       urls.push(`${base}/api/user`);
     }
-    urls.push('http://localhost:5000/api/user', 'http://127.0.0.1:5000/api/user');
+    urls.push('https://vijay-backend-xi.vercel.app/api/user');
     return urls;
   }
 

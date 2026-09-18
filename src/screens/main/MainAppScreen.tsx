@@ -127,21 +127,25 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
     return [];
   });
 
-  // Helper to convert any image URI to permanent Data URI (Base64) for localhost storage
-  const convertUriToDataUri = async (uri: string): Promise<string> => {
+  // Helper to convert any image URI to permanent Data URI (Base64) for localhost/cloud storage
+  const convertUriToDataUri = async (uri: string, base64?: string | null): Promise<string> => {
+    if (base64) return `data:image/jpeg;base64,${base64}`;
     if (typeof uri === 'string' && uri.startsWith('data:')) return uri;
-    try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => resolve(uri);
-        reader.readAsDataURL(blob);
-      });
-    } catch (e) {
-      return uri;
+    if (Platform.OS === 'web' && typeof fetch !== 'undefined') {
+      try {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => resolve(uri);
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        return uri;
+      }
     }
+    return uri;
   };
 
   const addUploadedMapToHistory = (source: any, customName?: string) => {
@@ -248,8 +252,8 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const rawUri = result.assets[0].uri;
-        const permanentUri = await convertUriToDataUri(rawUri);
+        const asset = result.assets[0];
+        const permanentUri = await convertUriToDataUri(asset.uri, asset.base64);
         const source = { uri: permanentUri };
 
         setSelectedSource(source);
@@ -270,7 +274,7 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
         }).catch(() => {});
 
         const bpName = `Tactical_Blueprint_${Date.now().toString().slice(-4)}.png`;
-        // Save to localhost backend disk & database
+        // Save to backend database
         MapService.uploadMapToBackend(permanentUri, bpName, user?.email || 'commando_tactical')
           .then((res) => {
             if (res?.map?.originalImage) {
@@ -294,8 +298,8 @@ export const MainAppScreen: React.FC<MainAppScreenProps> = ({ route, navigation 
             base64: true,
           });
           if (!res.canceled && res.assets && res.assets.length > 0) {
-            const rawUri = res.assets[0].uri;
-            const permanentUri = await convertUriToDataUri(rawUri);
+            const asset = res.assets[0];
+            const permanentUri = await convertUriToDataUri(asset.uri, asset.base64);
             const source = { uri: permanentUri };
 
             setSelectedSource(source);

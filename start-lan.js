@@ -26,7 +26,7 @@ for (const [name, addrs] of Object.entries(interfaces)) {
 
 // Fallback to Wi-Fi adapter IP if not found
 if (!selectedIp) {
-  selectedIp = '10.110.65.1';
+  selectedIp = '192.168.0.163';
 }
 
 console.log('\n=============================================================');

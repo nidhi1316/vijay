@@ -53,14 +53,18 @@ const DEFAULT_ARCHITECTURE: Architecture3D = {
   ],
 };
 
-// Generates self-contained HTML for Native WebView WebGL 3D rendering
+// Generates self-contained HTML for Native WebView WebGL 3D rendering with full features
 const generateNativeThreeHtml = (
   arch: Architecture3D,
   autoRotate: boolean,
   cameraMode: string,
-  isWireframe: boolean
+  isWireframe: boolean,
+  showDoorDistances: boolean = true,
+  squadData?: SquadLocationData | null,
+  isRedAlert: boolean = false
 ) => {
-  const serializedArch = JSON.stringify(arch);
+  const serializedArch = JSON.stringify(arch || {});
+  const serializedSquad = JSON.stringify(squadData || null);
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -132,10 +136,13 @@ const generateNativeThreeHtml = (
   </div>
   <script>
     (function() {
-      var arch = ${serializedArch};
+      var currentArch = ${serializedArch};
+      var currentSquad = ${serializedSquad};
       var autoRotate = ${autoRotate};
       var cameraMode = '${cameraMode}';
       var isWireframe = ${isWireframe};
+      var showDistances = ${showDoorDistances};
+      var isAlertRed = ${isRedAlert};
 
       var container = document.getElementById('canvas-container');
       var canvas = document.getElementById('three-canvas');
@@ -222,9 +229,16 @@ const generateNativeThreeHtml = (
 
           var beaconsGroup = new THREE.Group();
           orbitGroup.add(beaconsGroup);
+
+          var squadGroup = new THREE.Group();
+          orbitGroup.add(squadGroup);
+
           var pulseRings = [];
+          var alertMaterials = [];
+          var squadPulseRings = [];
 
           function buildArchitecture(a) {
+            currentArch = a || currentArch;
             while (wallsGroup.children.length > 0) {
               wallsGroup.remove(wallsGroup.children[0]);
             }
@@ -232,9 +246,10 @@ const generateNativeThreeHtml = (
               beaconsGroup.remove(beaconsGroup.children[0]);
             }
             pulseRings = [];
+            alertMaterials = [];
 
             // A. Rooms Floor Zones
-            var rooms = (a && a.rooms && a.rooms.length > 0) ? a.rooms : [];
+            var rooms = (currentArch && currentArch.rooms && currentArch.rooms.length > 0) ? currentArch.rooms : [];
             rooms.forEach(function(room) {
               var rw = room.bounds.width;
               var rd = room.bounds.depth;
@@ -279,7 +294,7 @@ const generateNativeThreeHtml = (
               linewidth: 1.5
             });
 
-            var walls = (a && a.walls && a.walls.length > 0) ? a.walls : [];
+            var walls = (currentArch && currentArch.walls && currentArch.walls.length > 0) ? currentArch.walls : [];
             walls.forEach(function(w) {
               var wallGeo = new THREE.BoxGeometry(w.width, w.height, w.depth);
               var wallMesh = new THREE.Mesh(wallGeo, wallMaterial);
@@ -294,7 +309,7 @@ const generateNativeThreeHtml = (
               wallsGroup.add(edgeLine);
             });
 
-            // C. Tactical Assets (Holo Table, Racks) placed dynamically inside detected rooms
+            // C. Tactical Assets (Command Holo Table & Server Racks)
             if (rooms && rooms.length > 0) {
               var cmdRoom = rooms[0];
               var cx = cmdRoom.bounds.x + cmdRoom.bounds.width / 2;
@@ -328,15 +343,14 @@ const generateNativeThreeHtml = (
             }
 
             // D. Tactical Beacons (With 10s Green-to-Red Alert Timer)
-            var alertMaterials = [];
-            var markers = (a && a.tacticalMarkers && a.tacticalMarkers.length > 0) ? a.tacticalMarkers : [];
+            var markers = (currentArch && currentArch.tacticalMarkers && currentArch.tacticalMarkers.length > 0) ? currentArch.tacticalMarkers : [];
             markers.forEach(function(marker) {
               var beaconSubGroup = new THREE.Group();
               beaconSubGroup.position.set(marker.position.x, marker.position.y, marker.position.z);
               beaconsGroup.add(beaconSubGroup);
 
               var isAlertMarker = (marker.color === '#EF4444' || marker.id === 'marker-server-vault' || marker.type === 'OBJECTIVE');
-              var initialHex = isAlertMarker ? 0x10b981 : (marker.color || '#10B981');
+              var initialHex = (isAlertMarker && !isAlertRed) ? 0x10b981 : (marker.color ? parseInt(marker.color.replace('#', '0x'), 16) : 0x10b981);
               var color = new THREE.Color(initialHex);
 
               var diamondGeo = new THREE.OctahedronGeometry(0.48, 0);
@@ -375,19 +389,282 @@ const generateNativeThreeHtml = (
                 alertMaterials.push({ mat: ringMat });
               }
             });
+
+            // E. 3D Doorways & Door Posts
+            if (currentArch && currentArch.doors && currentArch.doors.length > 0) {
+              var frameMat = new THREE.MeshStandardMaterial({
+                color: 0x38bdf8,
+                emissive: 0x0284c7,
+                emissiveIntensity: 0.35,
+                roughness: 0.3
+              });
+
+              currentArch.doors.forEach(function(door) {
+                var postGeo = new THREE.BoxGeometry(0.12, 2.2, 0.12);
+                var leftPost = new THREE.Mesh(postGeo, frameMat);
+                leftPost.position.set(door.position.x - 0.5, 1.1, door.position.z);
+                wallsGroup.add(leftPost);
+
+                var rightPost = new THREE.Mesh(postGeo, frameMat);
+                rightPost.position.set(door.position.x + 0.5, 1.1, door.position.z);
+                wallsGroup.add(rightPost);
+
+                var lintelGeo = new THREE.BoxGeometry(1.12, 0.14, 0.14);
+                var lintel = new THREE.Mesh(lintelGeo, frameMat);
+                lintel.position.set(door.position.x, 2.2, door.position.z);
+                wallsGroup.add(lintel);
+              });
+            }
+
+            // F. Door-to-Door Distance Rangefinder Measurements
+            if (showDistances && currentArch && currentArch.doorDistances && currentArch.doorDistances.length > 0) {
+              currentArch.doorDistances.forEach(function(meas) {
+                var isAlertDoor = meas.color === '#EF4444' || meas.id === 'dist-md-server';
+                var initialMeasColor = isAlertDoor
+                  ? (isAlertRed ? 0xef4444 : 0x10b981)
+                  : (meas.color ? parseInt(meas.color.replace('#', '0x'), 16) : 0x38bdf8);
+
+                var p1 = new THREE.Vector3(meas.fromPos.x, meas.fromPos.y, meas.fromPos.z);
+                var p2 = new THREE.Vector3(meas.toPos.x, meas.toPos.y, meas.toPos.z);
+
+                var dLineMat = new THREE.LineDashedMaterial({
+                  color: new THREE.Color(initialMeasColor),
+                  dashSize: 0.35,
+                  gapSize: 0.2
+                });
+
+                var dLinePoints = [p1, p2];
+                var dLineGeo = new THREE.BufferGeometry().setFromPoints(dLinePoints);
+                var dLine = new THREE.Line(dLineGeo, dLineMat);
+                dLine.computeLineDistances();
+                wallsGroup.add(dLine);
+
+                // Node spheres at endpoints
+                var nodeGeo = new THREE.SphereGeometry(0.12, 8, 8);
+                var nodeMat = new THREE.MeshBasicMaterial({ color: initialMeasColor });
+                var n1 = new THREE.Mesh(nodeGeo, nodeMat);
+                n1.position.copy(p1);
+                wallsGroup.add(n1);
+                var n2 = new THREE.Mesh(nodeGeo, nodeMat);
+                n2.position.copy(p2);
+                wallsGroup.add(n2);
+
+                if (isAlertDoor) {
+                  alertMaterials.push({ mat: dLineMat });
+                  alertMaterials.push({ mat: nodeMat });
+                }
+
+                // 3D Distance Label Sprite
+                try {
+                  var c = document.createElement('canvas');
+                  c.width = 256;
+                  c.height = 72;
+                  var ctx = c.getContext('2d');
+                  if (ctx) {
+                    ctx.fillStyle = 'rgba(6, 20, 14, 0.94)';
+                    ctx.strokeStyle = meas.color || '#38bdf8';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                      ctx.roundRect(8, 8, 240, 56, 16);
+                    } else {
+                      ctx.rect(8, 8, 240, 56);
+                    }
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.font = 'bold 26px Arial, sans-serif';
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('↔ ' + meas.distanceMeters + 'm', 128, 36);
+
+                    var texture = new THREE.CanvasTexture(c);
+                    texture.minFilter = THREE.LinearFilter;
+                    var spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+                    var sprite = new THREE.Sprite(spriteMat);
+                    sprite.scale.set(1.8, 0.55, 1);
+                    sprite.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 + 0.35, (p1.z + p2.z) / 2);
+                    wallsGroup.add(sprite);
+                  }
+                } catch (_) {}
+              });
+            }
+
+            renderSquad(currentSquad);
           }
 
-          buildArchitecture(arch);
+          function renderSquad(squad) {
+            currentSquad = squad || currentSquad;
+            while (squadGroup.children.length > 0) {
+              squadGroup.remove(squadGroup.children[0]);
+            }
+            squadPulseRings = [];
+
+            if (!currentSquad || !currentSquad.primaryUser || !currentSquad.dummyUser) return;
+
+            var pUser = currentSquad.primaryUser;
+            var dUser = currentSquad.dummyUser;
+
+            function createOperator(operator, isPrimary) {
+              var opGroup = new THREE.Group();
+              var x = operator.location.x;
+              var z = operator.location.z;
+              var themeColor = isPrimary ? 0x10b981 : 0x38bdf8;
+              var darkColor = isPrimary ? 0x064e3b : 0x0c4a6e;
+
+              opGroup.position.set(x, 0, z);
+
+              var sRingGeo = new THREE.RingGeometry(0.5, 0.85, 24);
+              var sRingMat = new THREE.MeshBasicMaterial({
+                color: themeColor,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.85
+              });
+              var sPulseRing = new THREE.Mesh(sRingGeo, sRingMat);
+              sPulseRing.rotation.x = Math.PI / 2;
+              sPulseRing.position.y = 0.06;
+              opGroup.add(sPulseRing);
+              squadPulseRings.push(sPulseRing);
+
+              var baseGeo = new THREE.CylinderGeometry(0.55, 0.65, 0.1, 16);
+              var baseMat = new THREE.MeshStandardMaterial({ color: 0x07150e, metalness: 0.8, roughness: 0.2 });
+              var baseMesh = new THREE.Mesh(baseGeo, baseMat);
+              baseMesh.position.y = 0.05;
+              opGroup.add(baseMesh);
+
+              var torsoGeo = new THREE.CylinderGeometry(0.28, 0.38, 1.15, 8);
+              var torsoMat = new THREE.MeshStandardMaterial({ color: darkColor, roughness: 0.4, metalness: 0.6 });
+              var torsoMesh = new THREE.Mesh(torsoGeo, torsoMat);
+              torsoMesh.position.y = 0.65;
+              opGroup.add(torsoMesh);
+
+              var headGeo = new THREE.SphereGeometry(0.26, 12, 12);
+              var headMat = new THREE.MeshStandardMaterial({ color: 0x0f291e, roughness: 0.3 });
+              var headMesh = new THREE.Mesh(headGeo, headMat);
+              headMesh.position.y = 1.35;
+              opGroup.add(headMesh);
+
+              var visorGeo = new THREE.BoxGeometry(0.32, 0.12, 0.22);
+              var visorMat = new THREE.MeshBasicMaterial({ color: themeColor });
+              var visorMesh = new THREE.Mesh(visorGeo, visorMat);
+              visorMesh.position.set(0, 1.35, 0.16);
+              opGroup.add(visorMesh);
+
+              try {
+                var c = document.createElement('canvas');
+                c.width = 256;
+                c.height = 64;
+                var ctx = c.getContext('2d');
+                if (ctx) {
+                  ctx.fillStyle = 'rgba(5, 15, 10, 0.9)';
+                  ctx.strokeStyle = isPrimary ? '#10B981' : '#38BDF8';
+                  ctx.lineWidth = 3;
+                  ctx.beginPath();
+                  if (ctx.roundRect) ctx.roundRect(6, 6, 244, 52, 12);
+                  else ctx.rect(6, 6, 244, 52);
+                  ctx.fill();
+                  ctx.stroke();
+
+                  ctx.font = 'bold 22px Arial, sans-serif';
+                  ctx.fillStyle = isPrimary ? '#34D399' : '#38BDF8';
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  ctx.fillText((isPrimary ? '🟢 YOU' : '🔵 VIKRAM') + ' (' + (operator.location.roomName || 'Area') + ')', 128, 32);
+
+                  var tex = new THREE.CanvasTexture(c);
+                  tex.minFilter = THREE.LinearFilter;
+                  var sMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+                  var tagSprite = new THREE.Sprite(sMat);
+                  tagSprite.scale.set(2.2, 0.55, 1);
+                  tagSprite.position.set(0, 2.0, 0);
+                  opGroup.add(tagSprite);
+                }
+              } catch (_) {}
+
+              return opGroup;
+            }
+
+            squadGroup.add(createOperator(pUser, true));
+            squadGroup.add(createOperator(dUser, false));
+
+            // Laser Rangefinder Connection Line
+            var p1 = new THREE.Vector3(pUser.location.x, 0.65, pUser.location.z);
+            var p2 = new THREE.Vector3(dUser.location.x, 0.65, dUser.location.z);
+
+            var laserMat = new THREE.LineDashedMaterial({
+              color: 0x38bdf8,
+              dashSize: 0.4,
+              gapSize: 0.2
+            });
+            var laserGeo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+            var laserLine = new THREE.Line(laserGeo, laserMat);
+            laserLine.computeLineDistances();
+            squadGroup.add(laserLine);
+
+            try {
+              var c = document.createElement('canvas');
+              c.width = 256;
+              c.height = 64;
+              var ctx = c.getContext('2d');
+              if (ctx) {
+                ctx.fillStyle = 'rgba(2, 20, 29, 0.92)';
+                ctx.strokeStyle = '#38BDF8';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(6, 6, 244, 52, 12);
+                else ctx.rect(6, 6, 244, 52);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.font = 'bold 24px Arial, sans-serif';
+                ctx.fillStyle = '#38BDF8';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('↔ ' + (currentSquad.distanceMeters || '11.2') + 'm LIVE LINK', 128, 32);
+
+                var tex = new THREE.CanvasTexture(c);
+                tex.minFilter = THREE.LinearFilter;
+                var sMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+                var distSprite = new THREE.Sprite(sMat);
+                distSprite.scale.set(2.4, 0.6, 1);
+                distSprite.position.set((p1.x + p2.x) / 2, 1.2, (p1.z + p2.z) / 2);
+                squadGroup.add(distSprite);
+              }
+            } catch (_) {}
+          }
+
+          buildArchitecture(currentArch);
 
           // 10-Second Transition: Turns Green Beacon RED after 10 seconds
-          setTimeout(function() {
+          var alertTimeout = setTimeout(function() {
+            setAlertRedColor();
+          }, 10000);
+
+          function setAlertRedColor() {
+            isAlertRed = true;
             var redColor = new THREE.Color(0xef4444);
             alertMaterials.forEach(function(item) {
               if (item.mat && item.mat.color) item.mat.color.copy(redColor);
               if (item.hasEmissive && item.mat && item.mat.emissive) item.mat.emissive.copy(redColor);
               if (item.mat) item.mat.needsUpdate = true;
             });
-          }, 10000);
+          }
+
+          function resetAlertTimer() {
+            clearTimeout(alertTimeout);
+            isAlertRed = false;
+            var greenColor = new THREE.Color(0x10b981);
+            alertMaterials.forEach(function(item) {
+              if (item.mat && item.mat.color) item.mat.color.copy(greenColor);
+              if (item.hasEmissive && item.mat && item.mat.emissive) item.mat.emissive.copy(greenColor);
+              if (item.mat) item.mat.needsUpdate = true;
+            });
+            alertTimeout = setTimeout(function() {
+              setAlertRedColor();
+            }, 10000);
+          }
 
           // Camera parameters
           var cameraAngle = Math.PI * 0.25;
@@ -514,6 +791,11 @@ const generateNativeThreeHtml = (
               ring.scale.set(s, s, 1);
             });
 
+            squadPulseRings.forEach(function(ring, idx) {
+              var s = 1 + (Math.sin(elapsed * 3.0 + idx) + 1) * 0.5;
+              ring.scale.set(s, s, 1);
+            });
+
             renderer.render(scene, camera);
           }
           animate();
@@ -548,6 +830,13 @@ const generateNativeThreeHtml = (
                     }
                   }
                 });
+              } else if (msg.type === 'TOGGLE_DOOR_DISTANCES') {
+                showDistances = !!msg.value;
+                buildArchitecture(currentArch);
+              } else if (msg.type === 'RESET_ALERT_TIMER') {
+                resetAlertTimer();
+              } else if (msg.type === 'SET_RED_ALERT') {
+                if (msg.value) setAlertRedColor();
               } else if (msg.type === 'ZOOM_IN') {
                 cameraDistance = Math.max(14, cameraDistance - 4);
               } else if (msg.type === 'ZOOM_OUT') {
@@ -567,6 +856,8 @@ const generateNativeThreeHtml = (
                 if (msg.architecture) {
                   buildArchitecture(msg.architecture);
                 }
+              } else if (msg.type === 'UPDATE_SQUAD_DATA') {
+                renderSquad(msg.squadData);
               }
             } catch(err) {}
           }
@@ -674,6 +965,7 @@ export const Tactical3DCanvas: React.FC<Tactical3DCanvasProps> = ({
     setIsRedAlert(false);
     isRedAlertRef.current = false;
     setAlertCountdown(10);
+    postToNativeWebView({ type: 'RESET_ALERT_TIMER' });
 
     alertMeshMaterialsRef.current.forEach(({ mat, hasEmissive }) => {
       if (mat && mat.color) mat.color.set(0x10b981);
@@ -756,6 +1048,23 @@ export const Tactical3DCanvas: React.FC<Tactical3DCanvasProps> = ({
       postToNativeWebView({ type: 'UPDATE_ARCHITECTURE', architecture });
     }
   }, [architecture]);
+
+  // Sync squad telemetry to native WebView
+  useEffect(() => {
+    if (squadData) {
+      postToNativeWebView({ type: 'UPDATE_SQUAD_DATA', squadData });
+    }
+  }, [squadData]);
+
+  // Sync door distances toggle to native WebView
+  useEffect(() => {
+    postToNativeWebView({ type: 'TOGGLE_DOOR_DISTANCES', value: showDoorDistances });
+  }, [showDoorDistances]);
+
+  // Sync red alert status to native WebView
+  useEffect(() => {
+    postToNativeWebView({ type: 'SET_RED_ALERT', value: isRedAlert });
+  }, [isRedAlert]);
 
   // Handle messages from native WebView
   const handleWebViewMessage = (event: any) => {
@@ -1619,10 +1928,18 @@ export const Tactical3DCanvas: React.FC<Tactical3DCanvasProps> = ({
     postToNativeWebView({ type: 'RESET_CAMERA' });
   };
 
-  // Generate HTML for native WebView
+  // Generate HTML for native WebView with full architectural and squad telemetry data
   const nativeHtml = useMemo(() => {
-    return generateNativeThreeHtml(activeArch, autoRotate, cameraMode, isWireframe);
-  }, [activeArch]);
+    return generateNativeThreeHtml(
+      activeArch,
+      autoRotate,
+      cameraMode,
+      isWireframe,
+      showDoorDistances,
+      squadData,
+      isRedAlert
+    );
+  }, [activeArch, autoRotate, cameraMode, isWireframe, showDoorDistances, squadData, isRedAlert]);
 
   return (
     <View style={styles.container}>
@@ -1651,12 +1968,13 @@ export const Tactical3DCanvas: React.FC<Tactical3DCanvasProps> = ({
       ) : (
         <WebView
           ref={webViewRef}
-          source={{ html: nativeHtml }}
+          source={{ html: nativeHtml, baseUrl: 'https://localhost' }}
           style={styles.webView}
           originWhitelist={['*']}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           allowFileAccess={true}
+          mixedContentMode="always"
           androidLayerType="hardware"
           scalesPageToFit={true}
           scrollEnabled={false}

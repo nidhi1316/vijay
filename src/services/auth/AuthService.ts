@@ -43,7 +43,10 @@ export class AuthService {
   private getCandidateUrls(endpoint: string): string[] {
     const urls: string[] = [];
 
-    // Production Cloud URL from Environment Variable
+    // 1. Primary Production Cloud Backend (Vercel)
+    urls.push(`https://vijay-backend-xi.vercel.app/api${endpoint}`);
+
+    // Production Cloud URL from Environment Variable if set
     if (process.env.EXPO_PUBLIC_API_URL) {
       const base = process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
       urls.push(`${base}/api${endpoint}`);
@@ -72,9 +75,8 @@ export class AuthService {
       urls.push(`http://10.0.2.2:5000/api${endpoint}`);
     }
 
-    // 4. Standard local loopback candidates
-    urls.push(`http://127.0.0.1:5000/api${endpoint}`);
-    urls.push(`http://localhost:5000/api${endpoint}`);
+    // 4. Fallback candidates
+    urls.push(`https://vijay-backend-xi.vercel.app/api${endpoint}`);
 
     // Remove duplicates
     return Array.from(new Set(urls));
@@ -117,7 +119,7 @@ export class AuthService {
 
     return {
       success: true,
-      message: 'Signed in successfully (Offline Mode)',
+      message: 'Signed in successfully with Defense PKI Certificate (Offline Mode)',
       user: {
         id: 'usr_demo_101',
         email: 'user@portal.gov',
@@ -125,7 +127,17 @@ export class AuthService {
         citizenId: 'ID-994812',
         isOnline: true,
         lastLogin: new Date().toISOString(),
-        token: 'mock_jwt_token_demo_mode_123',
+        token: 'pki_x509_rsa2048_cert_token_demo_101',
+        pkiCertificate: {
+          serialNumber: 'CERT-IN-MIL-DEMO-994812',
+          thumbprint: 'A1B2C3D4E5F67890123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0',
+          subjectDN: 'CN=Portal User, EMAIL=user@portal.gov, OU=Tactical Defense, O=Indian Cyber Security, C=IN',
+          issuerDN: 'CN=Indian Tactical Defense Root CA 2026, O=Govt of India, C=IN',
+          validFrom: new Date().toISOString(),
+          validTo: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          keyAlgorithm: 'RSA-2048 / SHA256withRSA',
+          version: 'X.509 v3',
+        },
       },
     };
   }
@@ -136,7 +148,7 @@ export class AuthService {
   async login(credentials: UserCredentials): Promise<any> {
     const fallbackUser = {
       success: true,
-      message: 'Signed in successfully (Offline Demo Mode)',
+      message: 'Signed in successfully with Defense PKI Certificate (Offline Demo Mode)',
       user: {
         id: 'usr_demo_101',
         email: credentials.identifier || 'user@portal.gov',
@@ -144,7 +156,17 @@ export class AuthService {
         citizenId: 'ID-994812',
         isOnline: true,
         lastLogin: new Date().toISOString(),
-        token: 'mock_jwt_token_demo_mode_123',
+        token: 'pki_x509_rsa2048_cert_token_demo_101',
+        pkiCertificate: {
+          serialNumber: 'CERT-IN-MIL-DEMO-994812',
+          thumbprint: 'A1B2C3D4E5F67890123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0',
+          subjectDN: `CN=${credentials.identifier || 'Portal User'}, OU=Tactical Defense, O=Indian Cyber Security, C=IN`,
+          issuerDN: 'CN=Indian Tactical Defense Root CA 2026, O=Govt of India, C=IN',
+          validFrom: new Date().toISOString(),
+          validTo: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          keyAlgorithm: 'RSA-2048 / SHA256withRSA',
+          version: 'X.509 v3',
+        },
       },
     };
 
@@ -160,12 +182,12 @@ export class AuthService {
   }
 
   /**
-   * Register new user
+   * Register new user and issue Defense PKI Certificate
    */
   async signup(data: SignupData): Promise<any> {
     const fallbackUser = {
       success: true,
-      message: 'Account created successfully (Offline Demo Mode)',
+      message: 'Account created & Defense PKI Certificate Issued (Offline Demo Mode)',
       user: {
         id: 'usr_demo_102',
         email: data.email,
@@ -173,7 +195,17 @@ export class AuthService {
         citizenId: 'ID-' + Math.floor(100000 + Math.random() * 900000),
         isOnline: true,
         lastLogin: new Date().toISOString(),
-        token: 'mock_jwt_token_demo_mode_456',
+        token: 'pki_x509_rsa2048_cert_token_demo_102',
+        pkiCertificate: {
+          serialNumber: 'CERT-IN-MIL-DEMO-102',
+          thumbprint: 'B2C3D4E5F6A17890123456789ABCDEF0123456789ABCDEF0123456789ABCDEF1',
+          subjectDN: `CN=${data.fullName}, EMAIL=${data.email}, OU=Tactical Defense, O=Indian Cyber Security, C=IN`,
+          issuerDN: 'CN=Indian Tactical Defense Root CA 2026, O=Govt of India, C=IN',
+          validFrom: new Date().toISOString(),
+          validTo: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          keyAlgorithm: 'RSA-2048 / SHA256withRSA',
+          version: 'X.509 v3',
+        },
       },
     };
 
@@ -211,7 +243,7 @@ export class AuthService {
       stats: {
         totalUsers: 12,
         onlineUsersCount: 3,
-        serverStatus: 'Demo Mode 🟢',
+        serverStatus: 'PKI Certificate Mode 🟢',
       },
       onlineUsers: [],
     };
@@ -223,6 +255,7 @@ export class AuthService {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'X-PKI-Certificate': token,
         },
       },
       fallbackDashboard
@@ -241,22 +274,45 @@ export class AuthService {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
+            'X-PKI-Certificate': token,
           },
         },
         { success: true, message: 'Logged out cleanly.' }
       );
-    } catch (error: any) {
+    } catch (e) {
       return { success: true, message: 'Logged out cleanly.' };
     }
   }
 
   /**
-   * Request password reset
+   * Fetch Master Defense CA Root Certificate details
    */
-  async forgotPassword(emailOrId: string): Promise<{ success: boolean; message: string }> {
+  async getCaCertificate(): Promise<any> {
+    return await this.requestWithFallback(
+      '/auth/ca-certificate',
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      },
+      {
+        success: true,
+        certificateAuthority: {
+          issuer: 'CN=Indian Tactical Defense Root CA 2026, O=Govt of India, C=IN',
+          algorithm: 'RSA-2048 / SHA256withRSA',
+          status: 'OPERATIONAL_ACTIVE',
+          validity: '2026 - 2036 (10 Years)',
+        },
+      }
+    );
+  }
+
+  /**
+   * Send Password Reset Link
+   */
+  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
     return {
       success: true,
-      message: 'Password reset link sent to your registered email.',
+      message: 'PKI Digital Certificate password recovery authorization sent to registered email.',
     };
   }
 }

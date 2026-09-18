@@ -2,6 +2,17 @@
  * Authentication Type Definitions
  */
 
+export interface PKICertificateInfo {
+  serialNumber?: string;
+  thumbprint?: string;
+  subjectDN?: string;
+  issuerDN?: string;
+  validFrom?: string;
+  validTo?: string;
+  keyAlgorithm?: string;
+  version?: string;
+}
+
 export interface User {
   id?: string;
   name?: string;
@@ -11,6 +22,7 @@ export interface User {
   token?: string;
   commandoPosition?: string;
   avatarUri?: string;
+  pkiCertificate?: PKICertificateInfo;
 }
 
 export interface AuthState {

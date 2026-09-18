@@ -4,7 +4,7 @@
 
 export const ENV = {
   isDev: __DEV__,
-  apiUrl: 'http://192.168.1.100:5000/api',
+  apiUrl: 'https://vijay-backend-xi.vercel.app/api',
   storagePrefix: '@ideajam:',
 };
 
